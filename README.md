@@ -71,8 +71,8 @@ jobs:
                   applicationId 'com.lc.hud'
                   minSdk 26
                   targetSdk 34
-                  versionCode 2
-                  versionName '1.1'
+                  versionCode 3
+                  versionName '1.2'
                   ndk { abiFilters 'arm64-v8a' }
               }
 
@@ -169,7 +169,10 @@ jobs:
                   root.addView(status);
 
                   TextView hint = new TextView(this);
-                  hint.setText("点 2 之后要等 3~10 秒加载模型，期间界面别乱点；\n卡住就下拉通知栏点「停止」。");
+                  hint.setText("1) 先给悬浮窗权限，确认 overlay=OK\n"
+                          + "2) 点开始，等 3~10 秒加载模型\n"
+                          + "3) 卡住/屏幕点不动：下拉通知栏点「停止」\n"
+                          + "4) 关掉「防自反馈」可以测是不是覆盖层导致的触摸问题");
                   hint.setTextColor(0xFF6E7A87);
                   hint.setTextSize(12f);
                   root.addView(hint);
@@ -197,6 +200,17 @@ jobs:
                       }
                   });
                   root.addView(sw);
+
+                  Switch sec = new Switch(this);
+                  sec.setText("防自反馈 FLAG_SECURE（有触摸问题就关掉它）");
+                  sec.setTextColor(0xFFFFFFFF);
+                  sec.setChecked(Cfg.secure);
+                  sec.setOnCheckedChangeListener(new android.widget.CompoundButton.OnCheckedChangeListener() {
+                      public void onCheckedChanged(android.widget.CompoundButton v, boolean on) {
+                          Cfg.secure = on;
+                      }
+                  });
+                  root.addView(sec);
 
                   ScrollView sv = new ScrollView(this);
                   sv.addView(root);
@@ -474,15 +488,19 @@ jobs:
 
               private void overlay() {
                   view = new HudView(this);
+                  view.setFocusable(false);
+                  view.setClickable(false);
                   int type = Build.VERSION.SDK_INT >= 26
                           ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
                           : WindowManager.LayoutParams.TYPE_PHONE;
+                  // 关键：不要 FLAG_LAYOUT_NO_LIMITS。它让窗口几何超出屏幕，
+                  // 部分 ROM 上会把这个叠层当成整屏可触摸区，表现就是
+                  // 「退出 App 后整块屏幕点不动」。宁可在挖孔区少画几像素。
                   int flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                           | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
                           | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
-                          | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
-                          | WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
-                          | WindowManager.LayoutParams.FLAG_SECURE;
+                          | WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED;
+                  if (Cfg.secure) flags |= WindowManager.LayoutParams.FLAG_SECURE;
                   WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
                           WindowManager.LayoutParams.MATCH_PARENT,
                           WindowManager.LayoutParams.MATCH_PARENT,
@@ -677,9 +695,10 @@ jobs:
               static volatile float conf = 0.35f;
               static volatile float iou = 0.45f;
               static volatile float lw = 3f;
-              static volatile int maxFps = 12;
+              static volatile int maxFps = 8;
               static volatile float capScale = 0.4f;
               static volatile boolean showFps = true;
+              static volatile boolean secure = true;
               static volatile int color = 0xFF00E676;
           }
 
@@ -878,6 +897,9 @@ jobs:
                   data = d;
                   ms = inferMs;
                   lastData = SystemClock.elapsedRealtime();
+                  // 只在有新结果时重绘。v2 在这里自激成 60fps 全屏重绘，
+                  // 而屏幕又被自己镜像，等于每帧再触发一次合成，把合成器打满，
+                  // 表现就是「整机触摸发飘/点不动」。
                   postInvalidateOnAnimation();
               }
 
@@ -919,7 +941,8 @@ jobs:
                               24f, 60f, txt);
                   }
 
-                  if (SystemClock.elapsedRealtime() - lastData < 1500) postInvalidateOnAnimation();
+                  // 不再自我续帧：没有新检测结果就停止重绘，
+                  // 把 GPU 和 SurfaceFlinger 让给游戏本身。
               }
           }
           EOF_AUX
@@ -945,4 +968,3 @@ jobs:
           name: apk
           path: app/build/outputs/apk/debug/*.apk
           retention-days: 30
-# hub
